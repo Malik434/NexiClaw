@@ -1,114 +1,141 @@
 import gradio as gr
 import requests
+import os
 
-# --- YOU MUST PASTE YOUR ACTUAL ASI CLOUD KEY HERE ---
-API_KEY = "YOUR-ASI-CLOUD-KEY-HERE"
-
-# --- UPDATED: The correct ASI Cloud Hackathon Gateway ---
+# Secure API Key handling
+# If testing locally, run: export ASI_API_KEY="your-key-here" before starting
+API_KEY = os.getenv("ASI_API_KEY")
 API_URL = "https://inference.asicloud.cudos.org/v1/chat/completions"
 
-def extract_to_atomspace(transcript_text: str):
+def chunk_text(text, chunk_size=3000, overlap=500):
+    """Splits text into overlapping chunks based on character count."""
+    chunks = []
+    start = 0
+    text_length = len(text)
+    
+    while start < text_length:
+        end = start + chunk_size
+        chunks.append(text[start:end])
+        if end >= text_length:
+            break
+        start = end - overlap
+    return chunks
+
+def extract_to_atomspace(transcript_text: str, global_context: str):
+    if not API_KEY:
+        return "System Error: ASI_API_KEY environment variable not set.", ""
     if not transcript_text.strip():
         return "Error: Please enter a transcript.", ""
 
-    # Standard OpenAI-compatible Auth Headers
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json"
     }
 
     try:
-        # Step 1: Qualitative Extraction (The Anti-Flattening Step)
-        extraction_prompt = (
-            "You are Nexi, a qualitative ethics researcher. Analyze the user transcript.\n"
-            "1. Identify the core Local Context (e.g., geographic/cultural demographic).\n"
-            "2. Extract specific Value Assertions made by the speaker.\n"
-            "3. Identify systemic Frictions or power imbalances.\n"
-            "Strictly avoid generic corporate safety jargon (e.g., 'stakeholder compliance'). "
-            "Keep the terms descriptive of ground reality."
-        )
+        # --- CAVEAT 1 & 2: Map Phase (Chunking with Global Context) ---
+        # We process each chunk individually to prevent flattening
+        chunks = chunk_text(transcript_text)
+        all_extractions = []
+        
+        # Provide a default context if the user leaves it blank
+        context_str = global_context.strip() if global_context.strip() else "Unknown context."
 
-        payload1 = {
-            "model": "minimax/minimax-m3", 
-            "messages": [
-                {"role": "system", "content": extraction_prompt},
-                {"role": "user", "content": transcript_text}
-            ],
-            "temperature": 0.15
-        }
+        for i, chunk in enumerate(chunks):
+            extraction_prompt = (
+                "You are Nexi, a qualitative ethics researcher. Analyze this specific chunk of an interview.\n"
+                f"GLOBAL CONTEXT: {context_str}\n\n"
+                "Task: Identify localized values, systemic frictions, and power imbalances in this text.\n"
+                "Strictly avoid generic corporate safety jargon. Keep terms descriptive of ground reality."
+            )
 
-        resp1 = requests.post(API_URL, headers=headers, json=payload1)
+            payload1 = {
+                "model": "minimax/minimax-m3", 
+                "messages": [
+                    {"role": "system", "content": extraction_prompt},
+                    {"role": "user", "content": f"CHUNK {i+1}:\n{chunk}"}
+                ],
+                "temperature": 0.15
+            }
 
-        if resp1.status_code != 200:
-            return f"API Error (Step 1): {resp1.status_code}\n{resp1.text}", ""
+            resp1 = requests.post(API_URL, headers=headers, json=payload1)
+            if resp1.status_code != 200:
+                return f"API Error in Chunk {i+1}: {resp1.status_code}\n{resp1.text}", ""
+            
+            chunk_result = resp1.json()['choices'][0]['message']['content'].strip()
+            all_extractions.append(f"--- Chunk {i+1} Findings ---\n{chunk_result}")
 
-        # Capture the output from Stage 1
-        extracted_analysis = resp1.json()['choices'][0]['message']['content'].strip()
+        # Combine all findings into one master log
+        combined_audit_log = "\n\n".join(all_extractions)
 
-        # Step 2: The AtomSpace Translation
+        # --- CAVEAT 3: Reduce Phase (Symbolic Consistency) ---
+        # We pass ALL findings to a final synthesis prompt to generate unified MeTTa code
         metta_prompt = (
-            "You are a Hyperon MeTTa compiler. Translate the ethical analysis provided by the user into valid MeTTa AtomSpace expressions.\n"
-            "Use the following symbolic schema rules:\n"
-            "- Define Context nodes: (ContextNode \"Name\")\n"
-            "- Define Value nodes: (ValueNode \"Name\")\n"
-            "- Link Context to Value: (EvaluationLink (ContextNode \"A\") (ValueNode \"B\") (stv 1.0 0.9))\n"
-            "- Represent systemic contradictions: (FrictionLink (ValueNode \"A\") (ConceptNode \"B\"))\n\n"
-            "Ensure the output contains ONLY valid MeTTa code blocks. Do not flatten localized perspectives."
+            "You are a Hyperon MeTTa compiler. I will provide a combined list of qualitative findings extracted from a large interview.\n"
+            "Your task is to synthesize these into a single, cohesive MeTTa knowledge graph.\n\n"
+            "CRITICAL SCHEMA RULES:\n"
+            "1. Consolidate duplicates: If two chunks mention the same concept, use only ONE node for it. Ensure logical consistency.\n"
+            "2. Define Context nodes: (ContextNode \"Name\")\n"
+            "3. Define Value nodes: (ValueNode \"Name\")\n"
+            "4. Link Context to Value: (EvaluationLink (ContextNode \"A\") (ValueNode \"B\") (stv 1.0 0.9))\n"
+            "5. Represent systemic contradictions: (FrictionLink (ValueNode \"A\") (ConceptNode \"B\"))\n\n"
+            "Output ONLY valid MeTTa code blocks. No introductory text."
         )
 
         payload2 = {
             "model": "minimax/minimax-m3",
             "messages": [
                 {"role": "system", "content": metta_prompt},
-                {"role": "user", "content": extracted_analysis}
+                {"role": "user", "content": combined_audit_log}
             ],
             "temperature": 0.1
         }
 
         resp2 = requests.post(API_URL, headers=headers, json=payload2)
-
         if resp2.status_code != 200:
-            return extracted_analysis, f"API Error (Step 2): {resp2.status_code}\n{resp2.text}"
+            return combined_audit_log, f"API Error (Stage 2): {resp2.status_code}\n{resp2.text}"
         
-        # Capture the output from Stage 2
         final_metta = resp2.json()['choices'][0]['message']['content'].strip()
 
-        # Return BOTH outputs
-        return extracted_analysis, final_metta
+        return combined_audit_log, final_metta
 
     except Exception as e:
         return f"System Error: {str(e)}", ""
 
 # Build the Web Interface
 with gr.Blocks() as demo:
-    gr.Markdown("# NexiClaw: Phase 0 AtomSpace Ingestion")
-    gr.Markdown("This interface bypasses standard LLM summarization by utilizing a reflexive extraction pipeline to map raw qualitative interviews directly into structured OpenCog Hyperon (MeTTa) expressions. **Stage 1 acts as a strict qualitative auditor, and Stage 2 compiles it to syntax.**")
+    gr.Markdown("# NexiClaw: Phase 0 AtomSpace Ingestion (Map-Reduce Architecture)")
+    gr.Markdown("This interface handles large transcripts by chunking data with overlap. **Stage 1 (Map)** extracts local friction from each chunk. **Stage 2 (Reduce)** synthesizes all findings into a logically consistent MeTTa graph.")
 
     with gr.Row():
         with gr.Column(scale=1):
+            global_context_input = gr.Textbox(
+                label="Global Context (Crucial for preventing Context Drift)",
+                lines=2,
+                placeholder="e.g., 'Speaker is Tariq, a multi-generational smallholder farmer in Punjab...'"
+            )
             input_text = gr.Textbox(
                 label="Raw Interview Transcript",
-                lines=15,
-                placeholder="Paste the interview text here..."
+                lines=12,
+                placeholder="Paste the large interview text here..."
             )
             submit_btn = gr.Button("Execute Reflexive Extraction", variant="primary")
 
         with gr.Column(scale=1):
             audit_log = gr.Textbox(
-                label="Stage 1: Qualitative Audit Log",
-                lines=15,
-                placeholder="The LLM's qualitative extraction will appear here..."
+                label="Stage 1: Chunked Qualitative Audit Log",
+                lines=17,
+                placeholder="The LLM's chunk-by-chunk qualitative extraction will appear here..."
             )
 
         with gr.Column(scale=1):
             output_code = gr.Textbox(
-                label="Stage 2: Generated MeTTa Expressions",
-                lines=15,
-                placeholder="The final compiled AtomSpace code will appear here..."
+                label="Stage 2: Synthesized MeTTa Expressions",
+                lines=17,
+                placeholder="The final compiled and deduplicated AtomSpace code will appear here..."
             )
 
-    # Link the submit button to the inputs and BOTH outputs
-    submit_btn.click(fn=extract_to_atomspace, inputs=input_text, outputs=[audit_log, output_code])
+    submit_btn.click(fn=extract_to_atomspace, inputs=[input_text, global_context_input], outputs=[audit_log, output_code])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=True)

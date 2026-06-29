@@ -80,7 +80,7 @@ def extract_to_atomspace(transcript_text: str):
         return f"System Error: {str(e)}", ""
 
 # Build the Web Interface
-with gr.Blocks(layout="wide") as demo:
+with gr.Blocks() as demo:
     gr.Markdown("# NexiClaw: Phase 0 AtomSpace Ingestion")
     gr.Markdown("This interface bypasses standard LLM summarization by utilizing a reflexive extraction pipeline to map raw qualitative interviews directly into structured OpenCog Hyperon (MeTTa) expressions. **Stage 1 acts as a strict qualitative auditor, and Stage 2 compiles it to syntax.**")
 

@@ -7,9 +7,9 @@ API_KEY = "YOUR-ASI-CLOUD-KEY-HERE"
 # --- UPDATED: The correct ASI Cloud Hackathon Gateway ---
 API_URL = "https://inference.asicloud.cudos.org/v1/chat/completions"
 
-def extract_to_atomspace(transcript_text: str) -> str:
+def extract_to_atomspace(transcript_text: str):
     if not transcript_text.strip():
-        return "Error: Please enter a transcript."
+        return "Error: Please enter a transcript.", ""
 
     # Standard OpenAI-compatible Auth Headers
     headers = {
@@ -29,7 +29,7 @@ def extract_to_atomspace(transcript_text: str) -> str:
         )
 
         payload1 = {
-            "model": "minimax/minimax-m3", # Use lowercase standard mapping if ASI requires it
+            "model": "minimax/minimax-m3", 
             "messages": [
                 {"role": "system", "content": extraction_prompt},
                 {"role": "user", "content": transcript_text}
@@ -40,8 +40,9 @@ def extract_to_atomspace(transcript_text: str) -> str:
         resp1 = requests.post(API_URL, headers=headers, json=payload1)
 
         if resp1.status_code != 200:
-            return f"API Error (Step 1): {resp1.status_code}\n{resp1.text}"
+            return f"API Error (Step 1): {resp1.status_code}\n{resp1.text}", ""
 
+        # Capture the output from Stage 1
         extracted_analysis = resp1.json()['choices'][0]['message']['content'].strip()
 
         # Step 2: The AtomSpace Translation
@@ -50,7 +51,6 @@ def extract_to_atomspace(transcript_text: str) -> str:
             "Use the following symbolic schema rules:\n"
             "- Define Context nodes: (ContextNode \"Name\")\n"
             "- Define Value nodes: (ValueNode \"Name\")\n"
-                        "- Define Value nodes: (ValueNode \"Name\")\n"
             "- Link Context to Value: (EvaluationLink (ContextNode \"A\") (ValueNode \"B\") (stv 1.0 0.9))\n"
             "- Represent systemic contradictions: (FrictionLink (ValueNode \"A\") (ConceptNode \"B\"))\n\n"
             "Ensure the output contains ONLY valid MeTTa code blocks. Do not flatten localized perspectives."
@@ -68,20 +68,24 @@ def extract_to_atomspace(transcript_text: str) -> str:
         resp2 = requests.post(API_URL, headers=headers, json=payload2)
 
         if resp2.status_code != 200:
-            return f"API Error (Step 2): {resp2.status_code}\n{resp2.text}"
+            return extracted_analysis, f"API Error (Step 2): {resp2.status_code}\n{resp2.text}"
+        
+        # Capture the output from Stage 2
+        final_metta = resp2.json()['choices'][0]['message']['content'].strip()
 
-        return resp2.json()['choices'][0]['message']['content'].strip()
+        # Return BOTH outputs
+        return extracted_analysis, final_metta
 
     except Exception as e:
-        return f"System Error: {str(e)}"
+        return f"System Error: {str(e)}", ""
 
 # Build the Web Interface
-with gr.Blocks() as demo:
+with gr.Blocks(layout="wide") as demo:
     gr.Markdown("# NexiClaw: Phase 0 AtomSpace Ingestion")
-    gr.Markdown("This interface bypasses traditional LLM flattening by utilizing a reflexive extraction pipeline to map raw qualitative interviews directly into structured OpenCog Hyperon (MeTTa) expressions.")
+    gr.Markdown("This interface bypasses standard LLM summarization by utilizing a reflexive extraction pipeline to map raw qualitative interviews directly into structured OpenCog Hyperon (MeTTa) expressions. **Stage 1 acts as a strict qualitative auditor, and Stage 2 compiles it to syntax.**")
 
     with gr.Row():
-        with gr.Column():
+        with gr.Column(scale=1):
             input_text = gr.Textbox(
                 label="Raw Interview Transcript",
                 lines=15,
@@ -89,13 +93,22 @@ with gr.Blocks() as demo:
             )
             submit_btn = gr.Button("Execute Reflexive Extraction", variant="primary")
 
-        with gr.Column():
-            output_code = gr.Textbox(
-                label="Generated MeTTa Expressions (AtomSpace Ready)",
-                lines=15
+        with gr.Column(scale=1):
+            audit_log = gr.Textbox(
+                label="Stage 1: Qualitative Audit Log",
+                lines=15,
+                placeholder="The LLM's qualitative extraction will appear here..."
             )
 
-    submit_btn.click(fn=extract_to_atomspace, inputs=input_text, outputs=output_code)
+        with gr.Column(scale=1):
+            output_code = gr.Textbox(
+                label="Stage 2: Generated MeTTa Expressions",
+                lines=15,
+                placeholder="The final compiled AtomSpace code will appear here..."
+            )
+
+    # Link the submit button to the inputs and BOTH outputs
+    submit_btn.click(fn=extract_to_atomspace, inputs=input_text, outputs=[audit_log, output_code])
 
 if __name__ == "__main__":
     demo.launch(server_name="0.0.0.0", server_port=7860, share=True)

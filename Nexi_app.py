@@ -2,8 +2,6 @@ import gradio as gr
 import requests
 import os
 
-# Secure API Key handling
-# If testing locally, run: export ASI_API_KEY="your-key-here" before starting
 API_KEY = os.getenv("ASI_API_KEY")
 API_URL = "https://inference.asicloud.cudos.org/v1/chat/completions"
 

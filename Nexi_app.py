@@ -2,7 +2,7 @@ import gradio as gr
 import requests
 import os
 
-API_KEY = os.getenv("ASI_API_KEY")
+API_KEY = os.getenv("API")
 API_URL = "https://inference.asicloud.cudos.org/v1/chat/completions"
 
 def chunk_text(text, chunk_size=3000, overlap=500):
